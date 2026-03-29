@@ -1,0 +1,33 @@
+# Sonna Spins — Ilaiyaraja Tamil DJ config
+# Rename this file and edit to create your own DJ personality
+
+name: "Sonna Spins"
+artist: "Ilaiyaraja"
+prefer_official: true  # Prefer official YouTube channel uploads
+
+# Song sources — mix of search queries and official playlist IDs
+sources:
+  # Official Ilaiyaraja YouTube channel playlists
+  - "PL89t04T3yNyZc3a5W8ASoSH5Z9MAaAlnN"   # SPB hits
+  - "PL89t04T3yNyaFHAS5QwT2xzw9OhDTDrXG"   # Rajinikanth hits
+  - "PL89t04T3yNyYM5Fx3wMJa-GTufP2i3HaO"   # Kamal Haasan hits
+  - "PL89t04T3yNyZDgD5FZLHf3Wx1wrC9Rqbr"   # Mohan hits
+  - "PL89t04T3yNybLy_iHb9zEeoGBqBKuHZPX"   # Best of Ilaiyaraja Evergreen
+  # Search queries as fallback
+  - "Ilaiyaraja SPB 1980s Tamil hit songs HD official"
+  - "Ilaiyaraja peppy dance songs Tamil 80s official"
+
+# TTS configuration
+tts:
+  backend: sarvam        # sarvam | kokoro
+  language: ta-IN        # ta-IN for Tamil, en-IN for Indian English
+  speaker: anushka       # Sarvam: anushka, manisha, vidya, arya | Kokoro: bm_george, af_heart
+  pace: 0.80             # Speech pace (0.6 slow — 1.0 normal — 1.2 fast)
+  pitch: 0.0             # Pitch adjustment (-1.0 to 1.0)
+  pause_between: 0.5     # Silence in seconds between intro chunks
+
+# Welcome message played at startup
+welcome_message: "வணக்கம்! இளையராஜாவின் இசையோடு இந்த நேரத்தை கொண்டாடுவோம். சோனா ஸ்பின்ஸில் உங்களை வரவேற்கிறோம்!"
+
+# Intro style: informative | poetic | minimal
+intro_style: informative

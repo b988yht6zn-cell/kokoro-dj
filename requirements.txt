@@ -1,0 +1,11 @@
+yt-dlp>=2026.3.17
+requests>=2.31.0
+pyyaml>=6.0
+soundfile>=0.12.1
+numpy>=1.24.0
+# TTS backends (install at least one)
+kokoro>=0.9.4          # English TTS — pip install kokoro soundfile
+# sarvam is API-based — set SARVAM_API_KEY env var (free at dashboard.sarvam.ai)
+# System dependencies:
+# brew install ffmpeg sox switchaudio-osx   (macOS)
+# apt install ffmpeg sox                    (Linux)
