@@ -2,14 +2,18 @@
 Sarvam AI TTS backend for kokoro-dj.
 Supports Tamil and Indian English via Sarvam's bulbul:v2 model.
 Generates expressive speech by splitting text into chunks with varying pace/pitch,
-then stitching together with sox.
+then stitching with sox.
+
+Requires:
+  - SARVAM_API_KEY environment variable (free at dashboard.sarvam.ai)
+  - pip install requests
+  - brew install ffmpeg sox  (macOS) / apt install ffmpeg sox (Linux)
 """
 
 import os
 import subprocess
 import tempfile
 import base64
-import json
 from typing import List, Tuple
 
 try:
@@ -17,14 +21,26 @@ try:
 except ImportError:
     raise ImportError("requests is required: pip install requests")
 
-
 SARVAM_API_URL = "https://api.sarvam.ai/text-to-speech"
+
+# macOS uses afplay; Linux uses aplay or paplay
+def _play_command(path: str) -> List[str]:
+    import platform
+    if platform.system() == "Darwin":
+        return ["afplay", path]
+    # Linux fallback — requires alsa-utils or pulseaudio-utils
+    for cmd in ["aplay", "paplay"]:
+        if subprocess.run(["which", cmd], capture_output=True).returncode == 0:
+            return [cmd, path]
+    raise EnvironmentError("No audio playback command found. Install aplay or paplay.")
 
 
 def _get_api_key() -> str:
     key = os.environ.get("SARVAM_API_KEY", "")
     if not key:
-        raise EnvironmentError("SARVAM_API_KEY not set in environment.")
+        raise EnvironmentError(
+            "SARVAM_API_KEY not set. Get a free key at dashboard.sarvam.ai"
+        )
     return key
 
 
@@ -39,6 +55,7 @@ def generate_chunk(
     """
     Generate a single TTS audio chunk via Sarvam API.
     Returns path to the WAV file.
+    Raises requests.HTTPError on API failure.
     """
     api_key = _get_api_key()
 
@@ -54,9 +71,11 @@ def generate_chunk(
             "pitch": pitch,
         },
     )
+    resp.raise_for_status()
+
     data = resp.json()
     if "audios" not in data:
-        raise RuntimeError(f"Sarvam API error: {data}")
+        raise RuntimeError(f"Sarvam API unexpected response: {data}")
 
     if output_path is None:
         output_path = tempfile.mktemp(suffix=".wav")
@@ -78,61 +97,80 @@ def generate_expressive(
     Generate expressive speech by stitching multiple chunks with pauses.
 
     chunks: list of (text, pace, pitch) tuples
+      - pace: 0.6 (slow) to 1.0 (normal). Keep pitch variation subtle (0.0–0.1).
+      - pitch: -1.0 to 1.0. Large jumps sound like a different voice — avoid.
     pause_between: silence in seconds between chunks
     Returns path to final stitched WAV file.
+
+    Requires ffmpeg and sox on PATH.
     """
-    tmp_dir = tempfile.mkdtemp()
-    wav_files = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        wav_files = []
 
-    for i, (text, pace, pitch) in enumerate(chunks):
-        out = os.path.join(tmp_dir, f"chunk_{i}.wav")
-        raw = generate_chunk(text, language_code, speaker, pace, pitch, out)
+        for i, (text, pace, pitch) in enumerate(chunks):
+            raw = os.path.join(tmp_dir, f"chunk_{i}_raw.wav")
+            generate_chunk(text, language_code, speaker, pace, pitch, raw)
 
-        # Normalise to pcm_s16le 22050Hz mono for sox compatibility
-        fixed = os.path.join(tmp_dir, f"chunk_{i}_fixed.wav")
+            # Normalise to pcm_s16le 22050Hz mono for sox compatibility
+            fixed = os.path.join(tmp_dir, f"chunk_{i}.wav")
+            result = subprocess.run(
+                ["ffmpeg", "-i", raw, "-ar", "22050", "-ac", "1",
+                 "-acodec", "pcm_s16le", fixed, "-y"],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"ffmpeg failed on chunk {i}: {result.stderr.decode()}")
+            wav_files.append(fixed)
+
+        # Generate silence file
+        silence_path = os.path.join(tmp_dir, "silence.wav")
         subprocess.run(
-            ["ffmpeg", "-i", raw, "-ar", "22050", "-ac", "1",
-             "-acodec", "pcm_s16le", fixed, "-y"],
-            capture_output=True,
+            ["sox", "-n", "-r", "22050", "-c", "1", silence_path,
+             "trim", "0.0", str(pause_between)],
+            capture_output=True, check=True,
         )
-        wav_files.append(fixed)
 
-    # Generate silence file
-    silence_path = os.path.join(tmp_dir, "silence.wav")
-    subprocess.run(
-        ["sox", "-n", "-r", "22050", "-c", "1", silence_path,
-         "trim", "0.0", str(pause_between)],
-        capture_output=True,
-    )
+        # Interleave chunks with silence
+        sox_args = ["sox"]
+        for wav in wav_files:
+            sox_args.extend([wav, silence_path])
+        sox_args.pop()  # remove trailing silence
 
-    # Interleave chunks with silence
-    sox_args = ["sox"]
-    for wav in wav_files:
-        sox_args.append(wav)
-        sox_args.append(silence_path)
-    sox_args.pop()  # remove trailing silence
+        if output_path is None:
+            # Use a path outside tmp_dir so it survives context exit
+            output_path = tempfile.mktemp(suffix=".wav")
 
-    if output_path is None:
-        output_path = tempfile.mktemp(suffix=".wav")
-
-    sox_args.append(output_path)
-    subprocess.run(sox_args, capture_output=True)
+        sox_args.append(output_path)
+        subprocess.run(sox_args, capture_output=True, check=True)
 
     return output_path
 
 
-def speak(text: str, language_code: str = "ta-IN", speaker: str = "anushka",
-          pace: float = 0.80, pitch: float = 0.0):
+def speak(
+    text: str,
+    language_code: str = "ta-IN",
+    speaker: str = "anushka",
+    pace: float = 0.80,
+    pitch: float = 0.0,
+):
     """Generate and immediately play a TTS clip."""
     path = generate_chunk(text, language_code, speaker, pace, pitch)
-    subprocess.run(["afplay", path])
-    os.unlink(path)
+    try:
+        subprocess.run(_play_command(path), check=True)
+    finally:
+        os.unlink(path)
 
 
-def speak_expressive(chunks: List[Tuple[str, float, float]],
-                     language_code: str = "ta-IN", speaker: str = "anushka",
-                     pause_between: float = 0.5):
+def speak_expressive(
+    chunks: List[Tuple[str, float, float]],
+    language_code: str = "ta-IN",
+    speaker: str = "anushka",
+    pause_between: float = 0.5,
+):
     """Generate and immediately play an expressive stitched TTS clip."""
     path = generate_expressive(chunks, language_code, speaker, pause_between)
-    subprocess.run(["afplay", path])
-    os.unlink(path)
+    try:
+        subprocess.run(_play_command(path), check=True)
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)

@@ -20,7 +20,7 @@ Built on a Sunday morning with Ilaiyaraja playing on a Bose Soundbar 700. 🎵
 
 ```bash
 # System tools
-brew install ffmpeg sox yt-dlp switchaudio-osx   # macOS
+brew install ffmpeg sox yt-dlp switchaudio-osx   # macOS (switchaudio-osx installs the SwitchAudioSource binary)
 # apt install ffmpeg sox && pip install yt-dlp   # Linux
 
 # Python
@@ -89,11 +89,9 @@ See `examples/ilaiyaraja.yaml` for a full annotated example.
 
 ## Hardware
 
-Tested on:
-- Mac Mini M4 16GB + Bose Soundbar 700 via Bluetooth
-- Mac Studio M3 Ultra (planned)
+Tested on macOS with Bluetooth speaker output. Should work on any macOS or Linux machine with ffmpeg and Python 3.10+.
 
-Works on any macOS or Linux machine with ffmpeg and Python 3.10+.
+**Linux note:** `afplay` is macOS-only. On Linux the code automatically falls back to `aplay` (alsa-utils) or `paplay` (pulseaudio-utils). Install one of these if you're on Linux.
 
 ## Bluetooth Setup (macOS)
 

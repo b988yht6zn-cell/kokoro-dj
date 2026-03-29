@@ -1,12 +1,21 @@
 """
 Kokoro TTS backend for kokoro-dj.
 English-language TTS using the Kokoro-82M model.
-Use this for English DJ intros or as a fallback when Sarvam is unavailable.
+Use for English DJ intros or as a fallback when Sarvam is unavailable.
+
+Note: _pipeline is a module-level singleton — not thread-safe.
+For single-threaded DJ use this is fine.
+
+Install:
+  pip install kokoro soundfile
+  brew install espeak-ng  (macOS)
+  apt install espeak-ng   (Linux)
 """
 
 import os
 import subprocess
 import tempfile
+import platform
 import numpy as np
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -19,6 +28,7 @@ except ImportError:
     _KOKORO_AVAILABLE = False
 
 
+# Module-level singleton pipeline (not thread-safe — single-threaded use only)
 _pipeline = None
 
 
@@ -26,9 +36,20 @@ def _get_pipeline(lang_code: str = "a"):
     global _pipeline
     if _pipeline is None:
         if not _KOKORO_AVAILABLE:
-            raise ImportError("kokoro not installed: pip install kokoro soundfile")
+            raise ImportError(
+                "kokoro not installed. Run: pip install kokoro soundfile"
+            )
         _pipeline = KPipeline(lang_code=lang_code)
     return _pipeline
+
+
+def _play_command(path: str):
+    if platform.system() == "Darwin":
+        return ["afplay", path]
+    for cmd in ["aplay", "paplay"]:
+        if subprocess.run(["which", cmd], capture_output=True).returncode == 0:
+            return [cmd, path]
+    raise EnvironmentError("No audio playback command found. Install aplay or paplay.")
 
 
 def generate(
@@ -54,5 +75,8 @@ def generate(
 def speak(text: str, voice: str = "bm_george", lang_code: str = "a"):
     """Generate and immediately play speech."""
     path = generate(text, voice, lang_code)
-    subprocess.run(["afplay", path])
-    os.unlink(path)
+    try:
+        subprocess.run(_play_command(path), check=True)
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)

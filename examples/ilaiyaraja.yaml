@@ -5,15 +5,17 @@ name: "Sonna Spins"
 artist: "Ilaiyaraja"
 prefer_official: true  # Prefer official YouTube channel uploads
 
-# Song sources — mix of search queries and official playlist IDs
+# Song sources — mix of YouTube playlist IDs (PL...) and search queries.
+# Playlist IDs are from the official Ilaiyaraja YouTube channel (@IlaiyaraajaOfficial)
+# as of early 2026 — they may change over time. Use search queries as a more stable fallback.
 sources:
-  # Official Ilaiyaraja YouTube channel playlists
+  # Official Ilaiyaraja YouTube channel playlists (may expire — verify at youtube.com/@IlaiyaraajaOfficial)
   - "PL89t04T3yNyZc3a5W8ASoSH5Z9MAaAlnN"   # SPB hits
   - "PL89t04T3yNyaFHAS5QwT2xzw9OhDTDrXG"   # Rajinikanth hits
   - "PL89t04T3yNyYM5Fx3wMJa-GTufP2i3HaO"   # Kamal Haasan hits
   - "PL89t04T3yNyZDgD5FZLHf3Wx1wrC9Rqbr"   # Mohan hits
   - "PL89t04T3yNybLy_iHb9zEeoGBqBKuHZPX"   # Best of Ilaiyaraja Evergreen
-  # Search queries as fallback
+  # Search queries — more stable, use these if playlist IDs stop working
   - "Ilaiyaraja SPB 1980s Tamil hit songs HD official"
   - "Ilaiyaraja peppy dance songs Tamil 80s official"
 

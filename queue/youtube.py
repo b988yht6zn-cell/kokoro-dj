@@ -26,7 +26,6 @@ def _yt_search(query: str, max_results: int = 10) -> List[dict]:
         try:
             v = json.loads(line)
             dur = v.get("duration", 0)
-            # Only single songs — skip jukeboxes and compilations
             if dur and 90 < dur < 540:
                 songs.append({
                     "id": v["id"],
@@ -72,7 +71,7 @@ class SongQueue:
     Live song queue that auto-refills from sources.
 
     Sources can be:
-      - YouTube search queries (strings)
+      - YouTube search queries (plain strings)
       - YouTube playlist IDs (strings starting with 'PL')
     """
 
@@ -81,25 +80,25 @@ class SongQueue:
         sources: List[str],
         min_ahead: int = 3,
         refill_interval: int = 30,
-        prefer_official: bool = True,
     ):
         self.sources = sources
         self.min_ahead = min_ahead
         self.refill_interval = refill_interval
-        self.prefer_official = prefer_official
 
         self._queue = deque()
         self._played_ids = set()
         self._lock = threading.Lock()
-        self._pool = []  # fetched but not yet queued
+        self._pool = []
 
-        # Start background refill thread
+        # Do an initial fill synchronously before starting background thread
+        self._fill_pool()
+        self._top_up_queue()
+
         self._running = True
         self._thread = threading.Thread(target=self._refill_loop, daemon=True)
         self._thread.start()
 
     def _fetch_from_sources(self) -> List[dict]:
-        """Fetch songs from all configured sources."""
         all_songs = []
         for source in self.sources:
             try:
@@ -109,31 +108,29 @@ class SongQueue:
                     songs = _yt_search(source)
                 all_songs.extend(songs)
             except Exception as e:
-                print(f"[queue] Error fetching from {source}: {e}")
+                print(f"[queue] Error fetching from source: {e}")
         return all_songs
 
+    def _fill_pool(self):
+        """Fetch fresh songs into the pool, excluding already played."""
+        songs = self._fetch_from_sources()
+        fresh = [s for s in songs if s["id"] not in self._played_ids]
+        random.shuffle(fresh)
+        self._pool = fresh
+
+    def _top_up_queue(self):
+        """Move songs from pool into the queue up to min_ahead + 2."""
+        while self._pool and len(self._queue) < self.min_ahead + 2:
+            self._queue.append(self._pool.pop(0))
+
     def _refill_loop(self):
-        """Background thread — keep pool stocked and queue topped up."""
         while self._running:
+            time.sleep(self.refill_interval)
             with self._lock:
                 if len(self._queue) < self.min_ahead:
-                    # Refill pool if needed
                     if not self._pool:
-                        songs = self._fetch_from_sources()
-                        # Filter already played
-                        fresh = [s for s in songs if s["id"] not in self._played_ids]
-                        random.shuffle(fresh)
-                        self._pool = fresh
-
-                    # Top up queue from pool
-                    while self._pool and len(self._queue) < self.min_ahead + 2:
-                        song = self._pool.pop(0)
-                        if self.prefer_official:
-                            # Prefer official channel results
-                            pass  # already filtered at search level
-                        self._queue.append(song)
-
-            time.sleep(self.refill_interval)
+                        self._fill_pool()
+                    self._top_up_queue()
 
     def next(self) -> Optional[dict]:
         """Get the next song from the queue."""
@@ -158,7 +155,7 @@ class SongQueue:
             queue_list.insert(position, song)
             self._queue = deque(queue_list)
 
-    def request(self, query: str):
+    def request(self, query: str) -> Optional[dict]:
         """Search for a specific song and inject it at the front."""
         songs = _yt_search(query, max_results=5)
         if songs:
