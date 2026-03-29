@@ -23,16 +23,7 @@ except ImportError:
 
 SARVAM_API_URL = "https://api.sarvam.ai/text-to-speech"
 
-# macOS uses afplay; Linux uses aplay or paplay
-def _play_command(path: str) -> List[str]:
-    import platform
-    if platform.system() == "Darwin":
-        return ["afplay", path]
-    # Linux fallback — requires alsa-utils or pulseaudio-utils
-    for cmd in ["aplay", "paplay"]:
-        if subprocess.run(["which", cmd], capture_output=True).returncode == 0:
-            return [cmd, path]
-    raise EnvironmentError("No audio playback command found. Install aplay or paplay.")
+from utils import play_command as _play_command
 
 
 def _get_api_key() -> str:

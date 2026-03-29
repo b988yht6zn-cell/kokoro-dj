@@ -10,7 +10,6 @@ Usage:
 
 import argparse
 import os
-import platform
 import subprocess
 import sys
 import time
@@ -18,21 +17,12 @@ import time
 import yaml
 
 from queue.youtube import SongQueue
+from utils import play_command as _play_command
 
 
 def load_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
-
-
-def _play_command(path: str):
-    """Return the right audio playback command for this OS."""
-    if platform.system() == "Darwin":
-        return ["afplay", path]
-    for cmd in ["aplay", "paplay"]:
-        if subprocess.run(["which", cmd], capture_output=True).returncode == 0:
-            return [cmd, path]
-    raise EnvironmentError("No audio playback command found. Install aplay or paplay.")
 
 
 def play_song(url: str) -> subprocess.Popen:

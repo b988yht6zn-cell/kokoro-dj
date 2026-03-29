@@ -3,7 +3,7 @@
 
 name: "Sonna Spins"
 artist: "Ilaiyaraja"
-prefer_official: true  # Prefer official YouTube channel uploads
+# prefer_official: reserved for future use — not currently implemented
 
 # Song sources — mix of YouTube playlist IDs (PL...) and search queries.
 # Playlist IDs are from the official Ilaiyaraja YouTube channel (@IlaiyaraajaOfficial)
@@ -31,5 +31,4 @@ tts:
 # Welcome message played at startup
 welcome_message: "வணக்கம்! இளையராஜாவின் இசையோடு இந்த நேரத்தை கொண்டாடுவோம். சோனா ஸ்பின்ஸில் உங்களை வரவேற்கிறோம்!"
 
-# Intro style: informative | poetic | minimal
-intro_style: informative
+# intro_style: reserved for future use (informative | poetic | minimal)

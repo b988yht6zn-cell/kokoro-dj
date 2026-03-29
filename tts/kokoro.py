@@ -15,7 +15,6 @@ Install:
 import os
 import subprocess
 import tempfile
-import platform
 import numpy as np
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -43,13 +42,7 @@ def _get_pipeline(lang_code: str = "a"):
     return _pipeline
 
 
-def _play_command(path: str):
-    if platform.system() == "Darwin":
-        return ["afplay", path]
-    for cmd in ["aplay", "paplay"]:
-        if subprocess.run(["which", cmd], capture_output=True).returncode == 0:
-            return [cmd, path]
-    raise EnvironmentError("No audio playback command found. Install aplay or paplay.")
+from utils import play_command as _play_command
 
 
 def generate(
