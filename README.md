@@ -59,6 +59,23 @@ SwitchAudioSource -s "Bose Soundbar 700"
 python dj.py --config my-dj.yaml
 ```
 
+## Project Structure
+
+```
+kokoro-dj/
+├── dj.py                  # Main entry point — DJ loop, queue management, intro playback
+├── utils.py               # Shared utilities (cross-platform audio playback command)
+├── queue/
+│   └── youtube.py         # Live auto-refilling song queue via yt-dlp
+├── tts/
+│   ├── sarvam.py          # Sarvam AI TTS (Tamil + Indian languages)
+│   └── kokoro.py          # Kokoro TTS (English, fully local)
+├── examples/
+│   └── ilaiyaraja.yaml    # Example config — Ilaiyaraja Tamil DJ
+├── requirements.txt
+└── README.md
+```
+
 ## Configuration
 
 See `examples/ilaiyaraja.yaml` for a full annotated example.

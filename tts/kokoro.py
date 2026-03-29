@@ -17,6 +17,8 @@ import subprocess
 import tempfile
 import numpy as np
 
+from utils import play_command as _play_command
+
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 try:
@@ -40,9 +42,6 @@ def _get_pipeline(lang_code: str = "a"):
             )
         _pipeline = KPipeline(lang_code=lang_code)
     return _pipeline
-
-
-from utils import play_command as _play_command
 
 
 def generate(
