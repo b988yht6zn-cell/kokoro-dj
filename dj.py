@@ -30,7 +30,7 @@ from typing import Optional
 
 import yaml
 
-from queue.manager import (
+from songqueue.manager import (
     add as queue_add,
     interrupt as queue_interrupt,
     stop as queue_stop,
@@ -40,7 +40,7 @@ from queue.manager import (
     _read as queue_read,
     _write as queue_write,
 )
-from queue.youtube import SongQueue
+from songqueue.youtube import SongQueue
 from utils.playback import play_command as _play_command
 from utils.audio import (
     wake_on_lan,
@@ -260,7 +260,7 @@ def run(config: dict, request: str = None):
         prep_thread = None
         peeked = None
         try:
-            from queue.manager import status
+            from songqueue.manager import status
             q_data = status()
             queue_list = q_data.get("queue", [])
             interrupt_song = q_data.get("interrupt")

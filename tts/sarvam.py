@@ -24,6 +24,9 @@ except ImportError:
 SARVAM_API_URL = "https://api.sarvam.ai/text-to-speech"
 
 from utils import play_command as _play_command
+from utils.log import get_logger
+
+log = get_logger()
 
 
 def _get_api_key() -> str:

@@ -21,19 +21,30 @@ import os
 import subprocess
 from typing import Optional
 
+from utils.log import get_logger
+
+log = get_logger()
+
 QUEUE_FILE = os.environ.get("SONNA_QUEUE_FILE", "/tmp/sonna_queue.json")
 
 
 def _read() -> dict:
     if not os.path.exists(QUEUE_FILE):
         return {"queue": [], "interrupt": None, "stop": False}
-    with open(QUEUE_FILE) as f:
-        return json.load(f)
+    try:
+        with open(QUEUE_FILE) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log.error("[queue] Failed to read queue file %s: %s", QUEUE_FILE, e)
+        return {"queue": [], "interrupt": None, "stop": False}
 
 
 def _write(data: dict):
-    with open(QUEUE_FILE, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(QUEUE_FILE, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        log.error("[queue] Failed to write queue file %s: %s", QUEUE_FILE, e)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

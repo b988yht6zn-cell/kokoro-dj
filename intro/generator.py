@@ -21,6 +21,9 @@ import json
 from typing import Optional
 
 from intro.prompts import SYSTEM_PROMPT, choose_prompt
+from utils.log import get_logger
+
+log = get_logger()
 
 
 # ── Metadata fetching ─────────────────────────────────────────────────────────
@@ -35,6 +38,7 @@ def fetch_youtube_metadata(ytid: str) -> dict:
         capture_output=True, text=True, timeout=20
     )
     if result.returncode != 0:
+        log.warning("[intro] yt-dlp metadata fetch failed for %s: %s", ytid, result.stderr.strip())
         return {}
 
     try:
@@ -223,7 +227,7 @@ def generate_intro(
             song.setdefault("year", meta.get("year", ""))
             song.setdefault("yt_description", meta.get("description", ""))
         except Exception as e:
-            print(f"[intro] Metadata fetch failed: {e}")
+            log.error("[intro] Metadata fetch failed: %s", e, exc_info=True)
 
     # Step 2: Web search for context (only for rich intros)
     if do_web_search and not song.get("web_context"):
@@ -242,7 +246,7 @@ def generate_intro(
                 )
                 song["web_context"] = ctx
             except Exception as e:
-                print(f"[intro] Web search failed: {e}")
+                log.warning("[intro] Web search failed: %s", e, exc_info=True)
 
     # Step 3: Build prompt
     prompt = choose_prompt(song, prev_song)
@@ -250,9 +254,9 @@ def generate_intro(
     # Step 4: Call LLM
     try:
         intro_text = call_llm(prompt, llm_config)
-        print(f"[intro] Generated: {intro_text[:80]}...")
+        log.info("[intro] Generated: %s...", intro_text[:80])
     except Exception as e:
-        print(f"[intro] LLM failed: {e} — using fallback")
+        log.error("[intro] LLM failed: %s — using fallback", e, exc_info=True)
         title = song.get("title", "")
         singer = song.get("singer", "")
         intro_text = f"{title}. {singer + ' குரலில்,' if singer else ''} கேட்டு மகிழுங்கள்."
