@@ -182,17 +182,23 @@ def run(config: dict, request: str = None):
 
     # Auto-queue fallback (when no file queue entries)
     sources = config.get("sources", [])
+    # Only start auto-queue if file queue is empty — never run both simultaneously
+    from songqueue.manager import remaining_mins as _remaining
+    file_queue_active = _remaining() > 0
+
     auto_queue: Optional[SongQueue] = None
-    if sources:
+    if sources and not file_queue_active:
         print("⏳ Loading auto-queue from sources...")
         auto_queue = SongQueue(sources=sources, min_ahead=3, refill_interval=30)
         if request:
             print(f"🔍 Requesting: {request}")
             auto_queue.request(request)
+    elif file_queue_active:
+        print(f"[dj] File queue active ({_remaining()} mins) — skipping auto-queue")
 
-    # Welcome message
+    # Welcome message — only play if no file queue (avoids overlap at startup)
     welcome = config.get("welcome_message")
-    if welcome:
+    if welcome and not file_queue_active:
         tts_cfg = config.get("tts", {})
         try:
             from tts.sarvam import speak
