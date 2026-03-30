@@ -4,11 +4,26 @@ kokoro-dj — A local DJ that streams music from YouTube
 with expressive voice intros between songs.
 
 Usage:
+    # Start the DJ with a config (runs until stopped)
     python dj.py --config examples/ilaiyaraja.yaml
+
+    # Queue management (works while DJ is running)
+    python dj.py --add '{"ytid":"abc123","title":"பாடல்","duration_mins":4}'
+    python dj.py --interrupt '{"ytid":"abc123","title":"பாடல்"}'
+    python dj.py --status
+    python dj.py --stop
+
+    # Audio device control
+    python dj.py --config examples/ilaiyaraja.yaml --volume 20
+    python dj.py --volume-up 10
+    python dj.py --volume-down 10
+
+    # Legacy: request a song by search query
     python dj.py --config examples/ilaiyaraja.yaml --request "Mouna Ragam SPB"
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -16,8 +31,24 @@ import time
 
 import yaml
 
+from queue.manager import (
+    add as queue_add,
+    interrupt as queue_interrupt,
+    stop as queue_stop,
+    status_str as queue_status_str,
+    next_song,
+    clear as queue_clear,
+    remaining_mins,
+)
 from queue.youtube import SongQueue
-from utils import play_command as _play_command
+from utils.playback import play_command as _play_command
+from utils.audio import (
+    wake_on_lan,
+    switch_airplay,
+    get_volume,
+    set_volume,
+    adjust_volume,
+)
 
 
 def load_config(path: str) -> dict:
@@ -51,16 +82,20 @@ def generate_intro(song: dict, config: dict) -> str:
     artist = config.get("artist", "the artist")
     title = song.get("title", "this song")
 
-    if language.startswith("ta"):
+    # Use per-song custom intro chunks if provided, else default template
+    custom_chunks = song.get("intro_chunks")
+    if custom_chunks:
+        intro_chunks = [tuple(c) for c in custom_chunks]
+    elif language.startswith("ta"):
         intro_chunks = [
-            (f"அடுத்த பாடல்...", 0.75, 0.0),
-            (f"{title}.", 0.82, 0.1),
-            (f"{artist} இசையில் ஒரு அற்புதமான தருணம்.", 0.78, 0.0),
+            (f"{title}.", 0.80, 0.1),
+            (f"{artist} இசையில், அற்புதமான குரலில்.", 0.78, 0.0),
+            ("கேட்டு மகிழுங்கள்.", 0.80, 0.0),
         ]
     else:
         intro_chunks = [
             (f"Up next — {title}.", 0.80, 0.0),
-            (f"Enjoy!", 0.82, 0.1),
+            ("Enjoy!", 0.82, 0.1),
         ]
 
     try:
@@ -93,38 +128,59 @@ def play_intro(path: str):
         except Exception as e:
             print(f"[dj] Warning: intro playback failed: {e}")
         finally:
-            os.unlink(path)
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+def _song_from_queue_entry(entry: dict) -> dict:
+    """Convert a queue manager entry to a dj song dict."""
+    ytid = entry.get("ytid", "")
+    return {
+        "id": ytid,
+        "title": entry.get("title", "Unknown"),
+        "duration": entry.get("duration_mins", 4) * 60,
+        "channel": entry.get("channel", ""),
+        "url": f"https://www.youtube.com/watch?v={ytid}",
+        "intro_chunks": entry.get("intro_chunks"),
+    }
 
 
 def run(config: dict, request: str = None):
-    """Main DJ loop."""
+    """Main DJ loop — plays songs sequentially with intros."""
+    tts_cfg = config.get("tts", {})
+
+    # Audio setup from config
+    audio_cfg = config.get("audio", {})
+    if audio_cfg.get("wol_mac"):
+        wake_on_lan(audio_cfg["wol_mac"], wait=audio_cfg.get("wol_wait", 8.0))
+    if audio_cfg.get("airplay_device"):
+        switch_airplay(audio_cfg["airplay_device"])
+    if audio_cfg.get("volume") is not None:
+        set_volume(audio_cfg["volume"])
+
+    # Clear any stale stop flag from previous session
+    from queue.manager import _read, _write
+    data = _read()
+    data["stop"] = False
+    _write(data)
+
+    # Decide queue mode: file-based (--add was used) or auto (sources in config)
     sources = config.get("sources", [])
-    if not sources:
-        print("No sources configured. Add search queries or playlist IDs to config.")
-        sys.exit(1)
+    use_file_queue = os.path.exists(os.environ.get("SONNA_QUEUE_FILE", "/tmp/sonna_queue.json"))
+    auto_queue = None
 
-    print(f"🎙️  kokoro-dj starting — {config.get('name', 'DJ')}")
-    print(f"    Sources : {len(sources)} configured")
-    print(f"    TTS     : {config.get('tts', {}).get('backend', 'sarvam')}")
-    print()
-    print("⏳ Loading initial queue (this may take a moment)...")
-
-    queue = SongQueue(
-        sources=sources,
-        min_ahead=3,
-        refill_interval=30,
-    )
-
-    if request:
-        print(f"🔍 Searching for: {request}")
-        song = queue.request(request)
-        if song:
-            print(f"   Queued: {song['title']}")
-        else:
-            print("   Song not found — continuing with auto queue")
+    if sources and not use_file_queue:
+        print(f"⏳ Loading initial queue from sources...")
+        auto_queue = SongQueue(sources=sources, min_ahead=3, refill_interval=30)
+        if request:
+            print(f"🔍 Searching for: {request}")
+            song = auto_queue.request(request)
+            if song:
+                print(f"   Queued: {song['title']}")
 
     # Welcome message
-    tts_cfg = config.get("tts", {})
     welcome = config.get("welcome_message")
     if welcome:
         print("🔊 Playing welcome message...")
@@ -141,16 +197,33 @@ def run(config: dict, request: str = None):
         except Exception as e:
             print(f"[dj] Warning: welcome message failed: {e}")
 
+    print(f"\n🎙️  kokoro-dj — {config.get('name', 'DJ')} — starting\n")
+
     while True:
-        song = queue.next()
-        if not song:
-            print("Queue empty — retrying in 10s...")
+        # Check file queue first (supports --add / --interrupt / --stop)
+        song = next_song()
+
+        if song is None and auto_queue:
+            # Fall back to auto queue
+            song = auto_queue.next()
+
+        if song is None:
+            # Check stop flag
+            from queue.manager import _read
+            if _read().get("stop"):
+                print("\n[dj] Stop signal received. Goodbye!")
+                break
+            print("[dj] Queue empty — waiting 10s...")
             time.sleep(10)
             continue
 
-        print(f"\n🎵 Now playing : {song['title']}")
-        print(f"   Channel     : {song.get('channel', 'Unknown')}")
-        print(f"   Duration    : {int(song.get('duration', 0) // 60)}:{int(song.get('duration', 0) % 60):02d}")
+        # Normalise to song dict format
+        if "url" not in song:
+            song = _song_from_queue_entry(song)
+
+        print(f"\n🎵 {song['title']}")
+        if song.get("channel"):
+            print(f"   {song['channel']}")
 
         intro_path = generate_intro(song, config)
         play_intro(intro_path)
@@ -158,14 +231,80 @@ def run(config: dict, request: str = None):
         proc = play_song(song["url"])
         proc.wait()
 
+    if auto_queue:
+        auto_queue.stop()
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="kokoro-dj — YouTube DJ with voice intros"
+        description="kokoro-dj — YouTube DJ with voice intros",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
     )
-    parser.add_argument("--config", required=True, help="Path to YAML config file")
-    parser.add_argument("--request", help="Request a specific song to play next")
+
+    # Run modes
+    parser.add_argument("--config", help="Path to YAML config file")
+    parser.add_argument("--request", help="Search for and play a specific song next")
+
+    # Queue management (no --config needed)
+    parser.add_argument("--add", metavar="JSON",
+                        help='Add a song: \'{"ytid":"...","title":"...","duration_mins":4}\'')
+    parser.add_argument("--interrupt", metavar="JSON",
+                        help='Play next then resume: \'{"ytid":"...","title":"..."}\'')
+    parser.add_argument("--stop", action="store_true",
+                        help="Stop the DJ after the current song")
+    parser.add_argument("--status", action="store_true",
+                        help="Show current queue status")
+
+    # Volume control (no --config needed)
+    parser.add_argument("--volume", type=int, metavar="N",
+                        help="Set volume to N (0–100)")
+    parser.add_argument("--volume-up", type=int, metavar="N",
+                        help="Increase volume by N")
+    parser.add_argument("--volume-down", type=int, metavar="N",
+                        help="Decrease volume by N")
+
     args = parser.parse_args()
+
+    # Queue management commands — no config needed
+    if args.add:
+        song = json.loads(args.add)
+        queue_add(song)
+        print(queue_status_str())
+        return
+
+    if args.interrupt:
+        song = json.loads(args.interrupt)
+        queue_interrupt(song)
+        print(f"[dj] Interrupt set: {song['title']}")
+        return
+
+    if args.stop:
+        queue_stop()
+        print("[dj] Stop signal sent.")
+        return
+
+    if args.status:
+        print(queue_status_str())
+        return
+
+    # Volume commands — no config needed
+    if args.volume is not None:
+        set_volume(args.volume)
+        return
+
+    if args.volume_up:
+        adjust_volume(+args.volume_up)
+        return
+
+    if args.volume_down:
+        adjust_volume(-args.volume_down)
+        return
+
+    # Start DJ — config required
+    if not args.config:
+        parser.print_help()
+        sys.exit(1)
 
     config = load_config(args.config)
     run(config, request=args.request)

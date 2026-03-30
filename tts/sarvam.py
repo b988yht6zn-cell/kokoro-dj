@@ -121,11 +121,19 @@ def generate_expressive(
             capture_output=True, check=True,
         )
 
-        # Interleave chunks with silence
+        # Generate tail silence (longer than between-chunk pause — prevents abrupt cut-off)
+        tail_path = os.path.join(tmp_dir, "tail.wav")
+        subprocess.run(
+            ["sox", "-n", "-r", "22050", "-c", "1", tail_path,
+             "trim", "0.0", "1.2"],
+            capture_output=True, check=True,
+        )
+
+        # Interleave chunks with silence, then append tail
         sox_args = ["sox"]
         for wav in wav_files:
             sox_args.extend([wav, silence_path])
-        sox_args.pop()  # remove trailing silence
+        sox_args.append(tail_path)  # trailing silence so last word doesn't cut abruptly
 
         if output_path is None:
             # Use a path outside tmp_dir so it survives context exit

@@ -1,34 +1,62 @@
-# Sonna Spins — Ilaiyaraja Tamil DJ config
+# Sonna Spins — Ilaiyaraja / MSV Tamil DJ config
 # Rename this file and edit to create your own DJ personality
 
 name: "Sonna Spins"
 artist: "Ilaiyaraja"
-# prefer_official: reserved for future use — not currently implemented
 
-# Song sources — mix of YouTube playlist IDs (PL...) and search queries.
-# Playlist IDs are from the official Ilaiyaraja YouTube channel (@IlaiyaraajaOfficial)
-# as of early 2026 — they may change over time. Use search queries as a more stable fallback.
+# ── Audio device setup (macOS) ─────────────────────────────────────────────────
+audio:
+  # Wake-on-LAN — wakes Bose Soundbar 700 from standby without triggering HDMI CEC (TV stays off)
+  wol_mac: "4c:87:5d:b2:62:8e"
+  wol_wait: 8.0                   # seconds to wait after WOL before switching audio
+  # AirPlay device name as registered in macOS CoreAudio
+  # NOTE: Bose Soundbar 700 registers as "AirPlay" — NOT "Bose Soundbar 700"
+  # Run: SwitchAudioSource -a -t output  to see your device names
+  # One-time setup: select the device once in System Settings → Sound → Output
+  airplay_device: "AirPlay"
+  volume: 16                      # startup volume (0–100)
+
+# ── Auto-queue sources (used when no file queue is active) ────────────────────
+# Mix of YouTube playlist IDs (PL...) and search queries.
+# Playlist IDs from official Ilaiyaraja channel (@IlaiyaraajaOfficial) — verify periodically.
 sources:
-  # Official Ilaiyaraja YouTube channel playlists (may expire — verify at youtube.com/@IlaiyaraajaOfficial)
   - "PL89t04T3yNyZc3a5W8ASoSH5Z9MAaAlnN"   # SPB hits
   - "PL89t04T3yNyaFHAS5QwT2xzw9OhDTDrXG"   # Rajinikanth hits
   - "PL89t04T3yNyYM5Fx3wMJa-GTufP2i3HaO"   # Kamal Haasan hits
   - "PL89t04T3yNyZDgD5FZLHf3Wx1wrC9Rqbr"   # Mohan hits
-  - "PL89t04T3yNybLy_iHb9zEeoGBqBKuHZPX"   # Best of Ilaiyaraja Evergreen
-  # Search queries — more stable, use these if playlist IDs stop working
+  - "PL89t04T3yNybLy_iHb9zEeoGBqBKuHZPX"   # Evergreen hits
   - "Ilaiyaraja SPB 1980s Tamil hit songs HD official"
   - "Ilaiyaraja peppy dance songs Tamil 80s official"
 
-# TTS configuration
+# ── TTS configuration ──────────────────────────────────────────────────────────
 tts:
   backend: sarvam        # sarvam | kokoro
   language: ta-IN        # ta-IN for Tamil, en-IN for Indian English
   speaker: anushka       # Sarvam: anushka, manisha, vidya, arya | Kokoro: bm_george, af_heart
-  pace: 0.80             # Speech pace (0.6 slow — 1.0 normal — 1.2 fast)
-  pitch: 0.0             # Pitch adjustment (-1.0 to 1.0)
+  pace: 0.80             # Speech pace (0.6 slow — 1.0 normal)
+  pitch: 0.0             # Pitch adjustment (-1.0 to 1.0). Keep 0.0–0.1 for natural sound.
   pause_between: 0.5     # Silence in seconds between intro chunks
 
 # Welcome message played at startup
 welcome_message: "வணக்கம்! இளையராஜாவின் இசையோடு இந்த நேரத்தை கொண்டாடுவோம். சோனா ஸ்பின்ஸில் உங்களை வரவேற்கிறோம்!"
 
-# intro_style: reserved for future use (informative | poetic | minimal)
+# ── MSV / AM Raja slow classics song pool ─────────────────────────────────────
+# Use these for a curated slow-melody session (Monday morning, working mood etc.)
+# Add via: python dj.py --add '{"ytid":"...","title":"...","duration_mins":4}'
+# YouTube IDs verified March 2026 — re-verify if broken.
+#
+# AM Raja / MSV:
+#   தென்றல் உறங்கிய போதும்       → Xk9Ug_g_hck
+#   வாராயோ வெண்ணிலாவே            → HVRP92Mu92E
+#   பாட்டு பாடவா                  → CHohkKC3wjU
+#   மாசில உண்மை காதலே             → RM096Otk3OQ
+#   தனிமையிலே இனிமை காண முடியுமா → o-lIvOeZgPw
+#   நிலவும் மலரும்                → search "Nilavum Malarum AM Raja MSV"
+#   காங்கலின் வார்த்தைகள்         → search "Kangalin Vaarthaigal AM Raja MSV"
+#   காலையும் நீயே                 → search "Kaalaiyum Neeye AM Raja MSV"
+#   பிருந்தாவனமும்                → search "Brindavanamum AM Raja MSV"
+#   மயக்கும் மாலை பொழுதே          → search "Mayakkum Maalai Pozhuthey AM Raja MSV"
+#
+# Singer verification: always check video description before adding
+# yt-dlp "VIDEO_ID" --get-description --get-title | head -5
+# e.g. "நிலவுக்கு என் மேல்" looks like AM Raja but is actually PB Sreenivas
