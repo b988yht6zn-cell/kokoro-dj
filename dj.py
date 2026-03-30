@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 kokoro-dj — A local DJ that streams music from YouTube
-with expressive voice intros between songs.
+with AI-generated voice intros between songs.
 
 Usage:
-    # Start the DJ with a config (runs until stopped)
+    # Start the DJ
     python dj.py --config examples/ilaiyaraja.yaml
 
     # Queue management (works while DJ is running)
@@ -13,13 +13,10 @@ Usage:
     python dj.py --status
     python dj.py --stop
 
-    # Audio device control
-    python dj.py --config examples/ilaiyaraja.yaml --volume 20
+    # Volume control
+    python dj.py --volume 20
     python dj.py --volume-up 10
     python dj.py --volume-down 10
-
-    # Legacy: request a song by search query
-    python dj.py --config examples/ilaiyaraja.yaml --request "Mouna Ragam SPB"
 """
 
 import argparse
@@ -27,7 +24,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
+from typing import Optional
 
 import yaml
 
@@ -37,8 +36,9 @@ from queue.manager import (
     stop as queue_stop,
     status_str as queue_status_str,
     next_song,
-    clear as queue_clear,
     remaining_mins,
+    _read as queue_read,
+    _write as queue_write,
 )
 from queue.youtube import SongQueue
 from utils.playback import play_command as _play_command
@@ -51,82 +51,64 @@ from utils.audio import (
 )
 
 
-def load_config(path: str) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+# ── Audio playback ────────────────────────────────────────────────────────────
 
-
-def play_song(url: str) -> subprocess.Popen:
+class AudioSession:
     """
-    Stream and play a song via yt-dlp + ffplay.
-    URL is passed as a list argument to avoid shell injection.
+    Manages a single yt-dlp → ffplay pipe.
+    Allows clean kill without leaving zombie processes.
     """
-    yt = subprocess.Popen(
-        ["yt-dlp", "-q", "-o", "-", url, "-f", "bestaudio"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-    )
-    ffplay = subprocess.Popen(
-        ["ffplay", "-nodisp", "-autoexit", "-i", "-"],
-        stdin=yt.stdout, stderr=subprocess.DEVNULL
-    )
-    yt.stdout.close()
-    return ffplay
+    def __init__(self):
+        self._yt: Optional[subprocess.Popen] = None
+        self._ffplay: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
 
+    def play(self, url: str):
+        """Start streaming. Blocks until song ends or kill() is called."""
+        self.kill()  # ensure clean state
 
-def generate_intro(song: dict, config: dict) -> str:
-    """Generate a DJ intro for a song. Returns path to WAV or None."""
-    tts_cfg = config.get("tts", {})
-    backend = tts_cfg.get("backend", "sarvam")
-    language = tts_cfg.get("language", "ta-IN")
-    speaker = tts_cfg.get("speaker", "anushka")
-    artist = config.get("artist", "the artist")
-    title = song.get("title", "this song")
-
-    # Use per-song custom intro chunks if provided, else default template
-    custom_chunks = song.get("intro_chunks")
-    if custom_chunks:
-        intro_chunks = [tuple(c) for c in custom_chunks]
-    elif language.startswith("ta"):
-        intro_chunks = [
-            (f"{title}.", 0.80, 0.1),
-            (f"{artist} இசையில், அற்புதமான குரலில்.", 0.78, 0.0),
-            ("கேட்டு மகிழுங்கள்.", 0.80, 0.0),
-        ]
-    else:
-        intro_chunks = [
-            (f"Up next — {title}.", 0.80, 0.0),
-            ("Enjoy!", 0.82, 0.1),
-        ]
-
-    try:
-        if backend == "sarvam":
-            from tts.sarvam import generate_expressive
-            return generate_expressive(
-                intro_chunks,
-                language_code=language,
-                speaker=speaker,
-                pause_between=tts_cfg.get("pause_between", 0.5),
+        with self._lock:
+            self._yt = subprocess.Popen(
+                ["yt-dlp", "-q", "-o", "-", url, "-f", "bestaudio"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
             )
-        elif backend == "kokoro":
-            from tts.kokoro import generate
-            voice = tts_cfg.get("voice", "bm_george")
-            text = " ".join(c[0] for c in intro_chunks)
-            return generate(text, voice=voice)
-        else:
-            print(f"[dj] Warning: unknown TTS backend '{backend}' — skipping intro")
-            return None
-    except Exception as e:
-        print(f"[dj] Warning: intro generation failed: {e}")
-        return None
+            self._ffplay = subprocess.Popen(
+                ["ffplay", "-nodisp", "-autoexit", "-i", "-"],
+                stdin=self._yt.stdout, stderr=subprocess.DEVNULL
+            )
+            self._yt.stdout.close()
+
+        self._ffplay.wait()
+        self._yt.wait()
+
+    def kill(self):
+        """Immediately stop playback."""
+        with self._lock:
+            for proc in [self._ffplay, self._yt]:
+                if proc and proc.poll() is None:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=3)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+            self._ffplay = None
+            self._yt = None
+
+    def is_playing(self) -> bool:
+        with self._lock:
+            return self._ffplay is not None and self._ffplay.poll() is None
 
 
-def play_intro(path: str):
-    """Play a pre-generated intro WAV file and clean up."""
+def play_intro_wav(path: str):
+    """Play a WAV file via afplay/aplay and clean up."""
     if path and os.path.exists(path):
         try:
             subprocess.run(_play_command(path), check=True)
         except Exception as e:
-            print(f"[dj] Warning: intro playback failed: {e}")
+            print(f"[dj] Intro playback failed: {e}")
         finally:
             try:
                 os.unlink(path)
@@ -134,24 +116,57 @@ def play_intro(path: str):
                 pass
 
 
-def _song_from_queue_entry(entry: dict) -> dict:
-    """Convert a queue manager entry to a dj song dict."""
-    ytid = entry.get("ytid", "")
-    return {
-        "id": ytid,
-        "title": entry.get("title", "Unknown"),
-        "duration": entry.get("duration_mins", 4) * 60,
-        "channel": entry.get("channel", ""),
-        "url": f"https://www.youtube.com/watch?v={ytid}",
-        "intro_chunks": entry.get("intro_chunks"),
-    }
+# ── Intro preparation ─────────────────────────────────────────────────────────
 
+def prepare_intro_wav(song: dict, prev_song: Optional[dict], config: dict) -> Optional[str]:
+    """
+    Generate intro WAV for a song. Returns path to WAV or None.
+    Uses AI generator if llm config is present, else falls back to template.
+    """
+    tts_cfg = config.get("tts", {})
+    llm_cfg = config.get("llm")
+
+    try:
+        if llm_cfg:
+            from intro.generator import generate_intro
+            chunks = generate_intro(song, prev_song, llm_cfg)
+        else:
+            # Simple template fallback (no LLM configured)
+            title = song.get("title", "")
+            artist = config.get("artist", "")
+            chunks = [
+                (f"{title}.", 0.80, 0.1),
+                (f"{artist + ' இசையில்,' if artist else ''} கேட்டு மகிழுங்கள்.", 0.78, 0.0),
+            ]
+
+        from tts.sarvam import generate_expressive
+        return generate_expressive(
+            chunks,
+            language_code=tts_cfg.get("language", "ta-IN"),
+            speaker=tts_cfg.get("speaker", "anushka"),
+            pause_between=tts_cfg.get("pause_between", 0.5),
+        )
+    except Exception as e:
+        print(f"[dj] Intro generation failed: {e}")
+        return None
+
+
+# ── Main DJ loop ──────────────────────────────────────────────────────────────
 
 def run(config: dict, request: str = None):
-    """Main DJ loop — plays songs sequentially with intros."""
-    tts_cfg = config.get("tts", {})
+    """
+    Main DJ loop.
 
-    # Audio setup from config
+    Flow per song:
+      1. Pop song from queue (already has intro_wav_path if pre-generated)
+      2. Play intro WAV
+      3. Start song stream in AudioSession (blocks main thread)
+      4. Meanwhile: background thread preps next song's intro
+      5. Poll for interrupt flag every 2s while playing
+         → if set: kill AudioSession immediately, handle interrupt
+      6. Song ends → loop
+    """
+    # Audio setup
     audio_cfg = config.get("audio", {})
     if audio_cfg.get("wol_mac"):
         wake_on_lan(audio_cfg["wol_mac"], wait=audio_cfg.get("wol_wait", 8.0))
@@ -160,123 +175,175 @@ def run(config: dict, request: str = None):
     if audio_cfg.get("volume") is not None:
         set_volume(audio_cfg["volume"])
 
-    # Clear any stale stop flag from previous session
-    from queue.manager import _read, _write
-    data = _read()
+    # Clear stale stop flag
+    data = queue_read()
     data["stop"] = False
-    _write(data)
+    queue_write(data)
 
-    # Decide queue mode: file-based (--add was used) or auto (sources in config)
+    # Auto-queue fallback (when no file queue entries)
     sources = config.get("sources", [])
-    use_file_queue = os.path.exists(os.environ.get("SONNA_QUEUE_FILE", "/tmp/sonna_queue.json"))
-    auto_queue = None
-
-    if sources and not use_file_queue:
-        print(f"⏳ Loading initial queue from sources...")
+    auto_queue: Optional[SongQueue] = None
+    if sources:
+        print("⏳ Loading auto-queue from sources...")
         auto_queue = SongQueue(sources=sources, min_ahead=3, refill_interval=30)
         if request:
-            print(f"🔍 Searching for: {request}")
-            song = auto_queue.request(request)
-            if song:
-                print(f"   Queued: {song['title']}")
+            print(f"🔍 Requesting: {request}")
+            auto_queue.request(request)
 
     # Welcome message
     welcome = config.get("welcome_message")
     if welcome:
-        print("🔊 Playing welcome message...")
+        tts_cfg = config.get("tts", {})
         try:
-            if tts_cfg.get("backend") == "sarvam":
-                from tts.sarvam import speak
-                speak(welcome,
-                      language_code=tts_cfg.get("language", "ta-IN"),
-                      speaker=tts_cfg.get("speaker", "anushka"),
-                      pace=tts_cfg.get("pace", 0.80))
-            elif tts_cfg.get("backend") == "kokoro":
-                from tts.kokoro import speak
-                speak(welcome, voice=tts_cfg.get("voice", "bm_george"))
+            from tts.sarvam import speak
+            speak(welcome,
+                  language_code=tts_cfg.get("language", "ta-IN"),
+                  speaker=tts_cfg.get("speaker", "anushka"),
+                  pace=tts_cfg.get("pace", 0.80))
         except Exception as e:
-            print(f"[dj] Warning: welcome message failed: {e}")
+            print(f"[dj] Welcome message failed: {e}")
 
-    print(f"\n🎙️  kokoro-dj — {config.get('name', 'DJ')} — starting\n")
+    print(f"\n🎙️  {config.get('name', 'kokoro-dj')} — starting\n")
+
+    session = AudioSession()
+    prev_song: Optional[dict] = None
+    next_intro_wav: Optional[str] = None  # pre-generated intro for next song
+    next_song_peeked: Optional[dict] = None  # the song that next_intro_wav belongs to
+
+    def _prep_next_intro(song: dict, prev: dict):
+        """Background thread: generate intro WAV and attach to song dict."""
+        nonlocal next_intro_wav, next_song_peeked
+        wav = prepare_intro_wav(song, prev, config)
+        next_intro_wav = wav
+        next_song_peeked = song
+        print(f"[dj] Intro ready for: {song.get('title', '')}")
 
     while True:
-        # Check file queue first (supports --add / --interrupt / --stop)
+        # ── Get next song ──────────────────────────────────────────────────
         song = next_song()
 
         if song is None and auto_queue:
-            # Fall back to auto queue
             song = auto_queue.next()
 
         if song is None:
-            # Check stop flag
-            from queue.manager import _read
-            if _read().get("stop"):
-                print("\n[dj] Stop signal received. Goodbye!")
+            if queue_read().get("stop"):
+                print("\n[dj] Stop signal received. Goodbye! 🎙️")
                 break
             print("[dj] Queue empty — waiting 10s...")
             time.sleep(10)
             continue
 
-        # Normalise to song dict format
+        # Normalise to full song dict
         if "url" not in song:
-            song = _song_from_queue_entry(song)
+            ytid = song.get("ytid", "")
+            song["url"] = f"https://www.youtube.com/watch?v={ytid}"
 
-        print(f"\n🎵 {song['title']}")
-        if song.get("channel"):
-            print(f"   {song['channel']}")
+        print(f"\n🎵 {song.get('title', 'Unknown')}")
 
-        intro_path = generate_intro(song, config)
-        play_intro(intro_path)
+        # ── Play intro ─────────────────────────────────────────────────────
+        # Use pre-generated intro if it matches this song, else generate now
+        if next_intro_wav and next_song_peeked and \
+                next_song_peeked.get("ytid") == song.get("ytid"):
+            intro_wav = next_intro_wav
+            next_intro_wav = None
+            next_song_peeked = None
+        else:
+            intro_wav = prepare_intro_wav(song, prev_song, config)
 
-        proc = play_song(song["url"])
-        proc.wait()
+        play_intro_wav(intro_wav)
+
+        # ── Start song + background intro prep + interrupt polling ─────────
+        play_thread = threading.Thread(target=session.play, args=(song["url"],), daemon=True)
+        play_thread.start()
+
+        # Peek at next song and start prepping its intro in background
+        prep_thread = None
+        peeked = None
+        try:
+            from queue.manager import status
+            q_data = status()
+            queue_list = q_data.get("queue", [])
+            interrupt_song = q_data.get("interrupt")
+            peeked = interrupt_song if interrupt_song else (queue_list[0] if queue_list else None)
+        except Exception:
+            pass
+
+        if peeked and peeked.get("ytid") != song.get("ytid"):
+            prep_thread = threading.Thread(
+                target=_prep_next_intro,
+                args=(peeked, song),
+                daemon=True
+            )
+            prep_thread.start()
+
+        # Poll while song plays — check for interrupt
+        interrupted = False
+        while play_thread.is_alive():
+            time.sleep(2)
+            q_data = queue_read()
+            if q_data.get("stop"):
+                session.kill()
+                interrupted = True
+                break
+            if q_data.get("interrupt"):
+                print(f"\n[dj] ⚡ Interrupt received — stopping current song")
+                session.kill()
+                # Cancel pre-gen thread result (it'll finish but we'll ignore it)
+                next_intro_wav = None
+                next_song_peeked = None
+                interrupted = True
+                break
+
+        play_thread.join(timeout=5)
+
+        if not interrupted:
+            prev_song = song
 
     if auto_queue:
         auto_queue.stop()
+    session.kill()
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def load_config(path: str) -> dict:
+    with open(path) as f:
+        return yaml.safe_load(f)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="kokoro-dj — YouTube DJ with voice intros",
+        description="kokoro-dj — AI-powered YouTube DJ with Tamil voice intros",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
 
-    # Run modes
     parser.add_argument("--config", help="Path to YAML config file")
     parser.add_argument("--request", help="Search for and play a specific song next")
 
-    # Queue management (no --config needed)
+    # Queue management
     parser.add_argument("--add", metavar="JSON",
-                        help='Add a song: \'{"ytid":"...","title":"...","duration_mins":4}\'')
+                        help='Add: \'{"ytid":"...","title":"...","duration_mins":4}\'')
     parser.add_argument("--interrupt", metavar="JSON",
                         help='Play next then resume: \'{"ytid":"...","title":"..."}\'')
-    parser.add_argument("--stop", action="store_true",
-                        help="Stop the DJ after the current song")
-    parser.add_argument("--status", action="store_true",
-                        help="Show current queue status")
+    parser.add_argument("--stop", action="store_true", help="Stop the DJ")
+    parser.add_argument("--status", action="store_true", help="Show queue status")
 
-    # Volume control (no --config needed)
-    parser.add_argument("--volume", type=int, metavar="N",
-                        help="Set volume to N (0–100)")
-    parser.add_argument("--volume-up", type=int, metavar="N",
-                        help="Increase volume by N")
-    parser.add_argument("--volume-down", type=int, metavar="N",
-                        help="Decrease volume by N")
+    # Volume
+    parser.add_argument("--volume", type=int, metavar="N", help="Set volume (0–100)")
+    parser.add_argument("--volume-up", type=int, metavar="N", help="Increase volume by N")
+    parser.add_argument("--volume-down", type=int, metavar="N", help="Decrease volume by N")
 
     args = parser.parse_args()
 
-    # Queue management commands — no config needed
     if args.add:
-        song = json.loads(args.add)
-        queue_add(song)
+        queue_add(json.loads(args.add))
         print(queue_status_str())
         return
 
     if args.interrupt:
-        song = json.loads(args.interrupt)
-        queue_interrupt(song)
-        print(f"[dj] Interrupt set: {song['title']}")
+        queue_interrupt(json.loads(args.interrupt))
+        print(f"[dj] Interrupt queued.")
         return
 
     if args.stop:
@@ -288,7 +355,6 @@ def main():
         print(queue_status_str())
         return
 
-    # Volume commands — no config needed
     if args.volume is not None:
         set_volume(args.volume)
         return
@@ -301,7 +367,6 @@ def main():
         adjust_volume(-args.volume_down)
         return
 
-    # Start DJ — config required
     if not args.config:
         parser.print_help()
         sys.exit(1)

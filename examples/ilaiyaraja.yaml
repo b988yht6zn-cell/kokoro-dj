@@ -28,6 +28,12 @@ sources:
   - "Ilaiyaraja SPB 1980s Tamil hit songs HD official"
   - "Ilaiyaraja peppy dance songs Tamil 80s official"
 
+# ── LLM configuration ──────────────────────────────────────────────────────────
+llm:
+  provider: anthropic
+  model: claude-haiku-4-5
+  api_key_env: ANTHROPIC_API_KEY
+
 # ── TTS configuration ──────────────────────────────────────────────────────────
 tts:
   backend: sarvam        # sarvam | kokoro

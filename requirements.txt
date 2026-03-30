@@ -3,6 +3,10 @@ requests>=2.31.0
 pyyaml>=6.0
 soundfile>=0.12.1
 numpy>=1.24.0
+# LLM providers
+anthropic>=0.25.0
+openai>=1.0.0             # optional, for openai/openrouter
+
 # TTS backends (install at least one)
 kokoro>=0.9.4          # English TTS — pip install kokoro soundfile
 # sarvam is API-based — set SARVAM_API_KEY env var (free at dashboard.sarvam.ai)
