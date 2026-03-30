@@ -119,14 +119,16 @@ def call_llm(prompt: str, config: dict) -> str:
             f"LLM API key not set. Set {api_key_env} environment variable."
         )
 
+    base_url = config.get("base_url")
+
     if provider == "anthropic":
         return _call_anthropic(prompt, model, api_key)
     elif provider == "openai":
         return _call_openai(prompt, model, api_key,
-                            base_url="https://api.openai.com/v1")
+                            base_url=base_url or "https://api.openai.com/v1")
     elif provider == "openrouter":
         return _call_openai(prompt, model, api_key,
-                            base_url="https://openrouter.ai/api/v1")
+                            base_url=base_url or "https://openrouter.ai/api/v1")
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
